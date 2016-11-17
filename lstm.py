@@ -153,16 +153,11 @@ class LSTM_param:
 
         np.random.seed(initial_seed)
         # Weight initialization
-        # self.wg = self.random_array(mu, sigma, num_mem_cells, concat_dim)
-        # self.wi = self.random_array(mu, sigma, num_mem_cells, concat_dim)
-        # self.wf = self.random_array(mu, sigma, num_mem_cells, concat_dim)
-        # self.wo = self.random_array(mu, sigma, num_mem_cells, concat_dim)
-        # self.wy = self.random_array(mu, sigma, output_dim, num_mem_cells)
-        self.wg = np.load('./wg.npz')['wg']
-        self.wi = np.load('./wi.npz')['wi']
-        self.wf = np.load('./wf.npz')['wf']
-        self.wo = np.load('./wo.npz')['wo']
-        self.wy = np.load('./wy.npz')['wy']
+        self.wg = self.random_array(mu, sigma, num_mem_cells, concat_dim)
+        self.wi = self.random_array(mu, sigma, num_mem_cells, concat_dim)
+        self.wf = self.random_array(mu, sigma, num_mem_cells, concat_dim)
+        self.wo = self.random_array(mu, sigma, num_mem_cells, concat_dim)
+        self.wy = self.random_array(mu, sigma, output_dim, num_mem_cells)
 
         # Bias initialization
         self.bg = np.zeros(num_mem_cells)
@@ -288,8 +283,8 @@ class LSTM_Node:
         self.state.f = sigmoid(np.dot(self.param.wf, xc) + self.param.bf)
         self.state.o = sigmoid(np.dot(self.param.wo, xc) + self.param.bo)
         self.state.s = self.state.g * self.state.i + s_prev * self.state.f
-        # self.state.h = np.tanh(self.state.s) * self.state.o
-        self.state.h = self.state.s * self.state.o
+        self.state.h = np.tanh(self.state.s) * self.state.o
+        # self.state.h = self.state.s * self.state.o
         self.state.y = np.dot(self.param.wy, self.state.h) + self.param.by
         pred = self.state.y
         self.state.prob = np.exp(pred) / np.sum(np.exp(pred))
@@ -316,9 +311,6 @@ class LSTM_network:
         self.num_mem_cells = num_mem_cells
         # loss
         self.smooth_loss = -np.log(1.0 / output_dim) * self.seq_len  # loss at iteration 0
-
-    def sample(self):
-
 
     def apply_grad(self):
         # update your weights
@@ -358,8 +350,8 @@ class LSTM_network:
 
             # gradient till cell state at time t
             dh = np.dot(param.wy.T, dy) + dh_next
-            ds = dh * state.o + ds_next
-            # ds = dh * state.o * (1 - (np.tanh(state.s) ** 2)) + ds_next
+            # ds = dh * state.o + ds_next
+            ds = dh * state.o * (1 - (np.tanh(state.s) ** 2)) + ds_next
 
             # gradients till the non linearities for gates
             dg = state.i * ds
