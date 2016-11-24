@@ -6,8 +6,8 @@
 #   i(t) = sigmoid(Wix * x(t), Wih * h(t - 1) + bg) ---> input Gate
 #   f(t) = sigmoid(Wfx * x(t), Wfh * h(t - 1) + bg) ---> forget Gate
 #   o(t) = sigmoid(Wox * x(t), Woh * h(t - 1) + bg) ---> output Gate
-#   S(t) = g(t) .* i(t) + f(t) .* S(t - 1)  ---> update Cell State s(t)
-#   h(t) = S(t) .* o(t) ---> update hidden state
+#   s(t) = g(t) .* i(t) + f(t) .* S(t - 1)  ---> update Cell State s(t)
+#   h(t) = tanh(s(t)) .* o(t) ---> update hidden state
 #
 # ---------
 # Notation:
@@ -25,7 +25,7 @@
 import numpy as np
 from random import uniform
 
-initial_seed = 42
+initial_seed = 0
 
 
 def sigmoid(x):
@@ -50,11 +50,14 @@ class LSTM_state:
 
 class LSTM:
 
-    def __init__(self, input_txt_file):
+    def __init__(self, input_txt_file, num_hidden_units=100, num_layers=1, lr=0.1):
         ''' Process the input data, prepare for training
         @params:
         --------
             input_txt_file - text file input containing the test characters
+            num_hidden_units - number of hidden units, default=100
+            num_layers - number of LSTM layers, default=1
+            lr - learning rate, default=0.1
         '''
 
         data = []
@@ -72,7 +75,33 @@ class LSTM:
         self.data = data
         self.data_len = len(data)
         self.seq_len = 25
-        self.objLstmNet = LSTM_network(self.vocab_size, self.vocab_size, self.seq_len)
+        self.objLstmNet = LSTM_network(self.vocab_size, self.vocab_size, self.seq_len, num_mem_cells=num_hidden_units, num_layers=num_layers, learning_rate=lr)
+
+    def sample_text(self, seed_idx, h_prev, s_prev, num_chars):
+
+        text = [self.index_to_char[seed_idx]]
+        idx = seed_idx
+        for i in range(num_chars):
+            x = np.zeros(self.vocab_size)
+            x[idx] = 1
+            xc = np.hstack((x, h_prev))
+            g = np.tanh(np.dot(self.objLstmNet.lstm_param.wg, xc) + self.objLstmNet.lstm_param.bg)
+            i = sigmoid(np.dot(self.objLstmNet.lstm_param.wi, xc) + self.objLstmNet.lstm_param.bi)
+            f = sigmoid(np.dot(self.objLstmNet.lstm_param.wf, xc) + self.objLstmNet.lstm_param.bf)
+            o = sigmoid(np.dot(self.objLstmNet.lstm_param.wo, xc) + self.objLstmNet.lstm_param.bo)
+            s = g * i + s_prev * f
+            # h = np.tanh(s) * o
+            h = s * o
+            pred = np.dot(self.objLstmNet.lstm_param.wy, h) + self.objLstmNet.lstm_param.by
+            prob = np.exp(pred) / np.sum(np.exp(pred))
+            h_prev = np.copy(h)
+            s_prev = np.copy(s)
+            # idx = np.argmax(np.random.multinomial(1, prob, 1))
+            idx = np.random.choice(range(self.vocab_size), p=prob.ravel())
+            text.append(self.index_to_char[idx])
+
+        text = ''.join(text)
+        return text
 
     def train(self):
         ''' Training the LSTM'''
@@ -102,12 +131,17 @@ class LSTM:
             h_prev = objLstmNet.lstm_node_list[num_samples - 1].state.h
 
             objLstmNet.calculate_loss(y_list)
+            # pdb.set_trace()
             objLstmNet.feed_backward(y_list)
             objLstmNet.apply_grad()
             objLstmNet.reset()
 
-            if sample_n % 50 == 0:
-                print('Iteration {}, loss = {}'.format(sample_n, self.objLstmNet.loss))
+            if sample_n % 100 == 0:
+                text = self.sample_text(inputs[0], h_prev, s_prev, 50)
+                print('--------Iter:{} -> Loss: {}--------------'.format(sample_n, self.objLstmNet.loss))
+                print(text)
+                print('--------------------------------------------------')
+                # print('\nIteration {}, loss = {}'.format(sample_n, self.objLstmNet.loss))
 
             ptr = ptr + self.seq_len
             sample_n = sample_n + 1
@@ -158,6 +192,12 @@ class LSTM_param:
         self.wf = self.random_array(mu, sigma, num_mem_cells, concat_dim)
         self.wo = self.random_array(mu, sigma, num_mem_cells, concat_dim)
         self.wy = self.random_array(mu, sigma, output_dim, num_mem_cells)
+
+        # self.wg = np.load('./wg.npz')['wg']
+        # self.wi = np.load('./wi.npz')['wi']
+        # self.wf = np.load('./wf.npz')['wf']
+        # self.wo = np.load('./wo.npz')['wo']
+        # self.wy = np.load('./wy.npz')['wy']
 
         # Bias initialization
         self.bg = np.zeros(num_mem_cells)
@@ -283,8 +323,8 @@ class LSTM_Node:
         self.state.f = sigmoid(np.dot(self.param.wf, xc) + self.param.bf)
         self.state.o = sigmoid(np.dot(self.param.wo, xc) + self.param.bo)
         self.state.s = self.state.g * self.state.i + s_prev * self.state.f
-        self.state.h = np.tanh(self.state.s) * self.state.o
-        # self.state.h = self.state.s * self.state.o
+        # self.state.h = np.tanh(self.state.s) * self.state.o
+        self.state.h = self.state.s * self.state.o
         self.state.y = np.dot(self.param.wy, self.state.h) + self.param.by
         pred = self.state.y
         self.state.prob = np.exp(pred) / np.sum(np.exp(pred))
@@ -297,7 +337,7 @@ class LSTM_Node:
 
 class LSTM_network:
 
-    def __init__(self, input_dim, output_dim, seq_len, num_mem_cells=100, learning_rate=0.1):
+    def __init__(self, input_dim, output_dim, seq_len, num_mem_cells=100, num_layers=1, learning_rate=0.1):
         '''Initialize the LSTM unit, LSTM state'''
 
         # weights and bias are reused, so initialize lstm_param only once
@@ -350,8 +390,8 @@ class LSTM_network:
 
             # gradient till cell state at time t
             dh = np.dot(param.wy.T, dy) + dh_next
-            # ds = dh * state.o + ds_next
-            ds = dh * state.o * (1 - (np.tanh(state.s) ** 2)) + ds_next
+            ds = dh * state.o + ds_next
+            # ds = dh * state.o * (1 - (np.tanh(state.s) ** 2)) + ds_next
 
             # gradients till the non linearities for gates
             dg = state.i * ds
@@ -517,7 +557,7 @@ def gradient_check(inputs, targets, s_prev=None, h_prev=None):
 
 
 def test():
-    objLstm = LSTM('./input.txt')
+    objLstm = LSTM('./abstract.txt')
     objLstm.train()
 
 
